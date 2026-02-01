@@ -1,0 +1,13 @@
+---
+- name: Test VM connectivity with echo
+  hosts: test_vm
+  gather_facts: false
+
+  tasks:
+    - name: Execute echo command
+      ansible.builtin.command: echo "Hello from Ansible on {{ inventory_hostname }}"
+      register: echo_result
+
+    - name: Display echo output
+      ansible.builtin.debug:
+        msg: "{{ echo_result.stdout }}"

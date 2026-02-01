@@ -1,0 +1,83 @@
+name: E2E Tests
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e-test:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible qemu-system-x86 libvirt-daemon-system libvirt-clients virtinst cloud-image-utils
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.4"
+
+      - name: Start and configure libvirt
+        run: |
+          sudo systemctl start libvirtd
+          sudo usermod -aG libvirt $USER
+          # Allow current session to use libvirt
+          sudo chmod 666 /var/run/libvirt/libvirt-sock
+          
+          # Configure QEMU to run without security restrictions (for CI only)
+          echo 'security_driver = "none"' | sudo tee -a /etc/libvirt/qemu.conf
+          echo 'user = "root"' | sudo tee -a /etc/libvirt/qemu.conf
+          echo 'group = "root"' | sudo tee -a /etc/libvirt/qemu.conf
+          sudo systemctl restart libvirtd
+          
+          # Create default storage pool
+          sudo mkdir -p /var/lib/libvirt/images
+          sudo chmod 777 /var/lib/libvirt/images
+          sudo virsh pool-define-as default dir --target /var/lib/libvirt/images
+          sudo virsh pool-build default
+          sudo virsh pool-start default
+          sudo virsh pool-autostart default
+          
+          # Start default network
+          sudo virsh net-start default || true
+
+      - name: Generate SSH key
+        run: |
+          ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+
+      - name: Provision test VM (software emulation)
+        working-directory: tests/infra
+        run: ./start-vm.sh --no-kvm -y
+
+      - name: Wait for VM to boot
+        env:
+          LIBVIRT_DEFAULT_URI: qemu:///system
+        run: |
+          echo "Waiting for VM to get DHCP lease (this may take a while without KVM)..."
+          for i in {1..60}; do
+            if virsh net-dhcp-leases default | grep -q "test-vm"; then
+              echo "VM has DHCP lease"
+              break
+            fi
+            echo "Attempt $i/60: Waiting..."
+            sleep 10
+          done
+          # Additional wait for SSH to be ready
+          sleep 30
+
+      - name: Run E2E tests
+        working-directory: tests/e2e
+        run: ./run-test.sh
+
+      - name: Destroy test VM
+        if: always()
+        working-directory: tests/infra
+        run: ./destroy-vm.sh --no-kvm -y
