@@ -1,0 +1,51 @@
+name: build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest ]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+      CC: "sccache gcc"
+      CXX: "sccache g++"
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.9
+      with:
+        version: "v0.10.0"
+
+    - name: Install cmake
+      uses: lukka/get-cmake@latest
+      with:
+        cmakeVersion: "~3.29.0" # Use version 3.29.x
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build python3-pyelftools
+
+    - name: Configure cmake
+      run: cmake -S . -B build
+
+    - name: Patch SPDK for pip-tools compatibility
+      run: |
+        # Create missing version.py for SPDK Python package (needed by hatchling/pip-compile)
+        echo "__version__ = '26.1.0'" > build/spdk-src/python/spdk/version.py
+        # Patch pkgdep script to use pinned pip-tools (pip-tools 7.5.2 is incompatible with pip 26)
+        sed -i 's/python -m pip install pip-tools/python -m pip install "pip<25" "pip-tools==7.4.1"/' build/spdk-src/scripts/pkgdep/debian.sh
+
+    - name: SPDK dependencies
+      run: |
+        sudo cmake --build build --target spdk_pkgdep
+
+    - name: Build and install spdk
+      run: |
+        cmake --build build --target configure_spdk
+        cmake --build build --target build_spdk --parallel --verbose
