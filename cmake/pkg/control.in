@@ -1,0 +1,8 @@
+Package: spdk
+Version: @SPDK_VERSION@
+Section: libs
+Priority: optional
+Architecture: amd64
+Depends: libc6, libnuma1, libssl3t64 | libssl3, libaio1t64 | libaio1, libfuse3-3, libuuid1, libiscsi7
+Maintainer: maintainer@example.com
+Description: Storage Performance Development Kit (SPDK) - custom build

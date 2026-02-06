@@ -59,12 +59,12 @@
     # Verify SPDK installation
     - name: Check SPDK spdk_tgt exists
       ansible.builtin.stat:
-        path: /usr/local/bin/spdk_tgt
+        path: /opt/spdk/bin/spdk_tgt
       register: spdk_tgt
 
     - name: Check SPDK spdk_lspci exists
       ansible.builtin.stat:
-        path: /usr/local/bin/spdk_lspci
+        path: /opt/spdk/bin/spdk_lspci
       register: spdk_lspci
 
     - name: Verify SPDK binaries are installed
@@ -76,18 +76,18 @@
         success_msg: "SPDK binaries installed successfully"
 
     - name: List installed SPDK binaries
-      ansible.builtin.command: ls -la /usr/local/bin/
+      ansible.builtin.command: ls -la /opt/spdk/bin/
       register: spdk_binaries
 
     - name: Display SPDK binaries
       ansible.builtin.debug:
         msg: "{{ spdk_binaries.stdout_lines }}"
 
-    # Setup hugepages for DPDK/SPDK
+    # Setup hugepages for DPDK/SPDK (256 x 2MB = 512MB minimum for basic operation)
     - name: Allocate hugepages
       become: true
       ansible.builtin.shell: |
-        echo 1024 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+        echo 256 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
         cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
       register: hugepages_result
 
@@ -169,9 +169,7 @@
     # Run spdk_lspci to verify SPDK works (lists PCI devices)
     - name: Run spdk_lspci to verify SPDK
       become: true
-      ansible.builtin.shell: |
-        export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-        /usr/local/bin/spdk_lspci 2>&1
+      ansible.builtin.command: /opt/spdk/bin/spdk_lspci
       register: spdk_lspci_result
 
     - name: Display spdk_lspci output

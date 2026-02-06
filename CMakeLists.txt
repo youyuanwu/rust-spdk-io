@@ -92,6 +92,7 @@ endif()
 # Note: SPDK does not support true out-of-tree builds - must build in source directory
 add_custom_target(configure_spdk
     COMMAND ${CMAKE_COMMAND} -E env ${SPDK_CC_ENV} ./configure 
+      --prefix=/opt/spdk
       --with-shared --without-rdma --without-fio --without-rbd 
       --without-dpdk --without-ocf --without-crypto 
       --disable-tests --disable-unit-tests --target-arch=nehalem
@@ -111,54 +112,19 @@ add_custom_target(clean_spdk
     COMMENT "Cleaning SPDK build"
 )
 
-# Add custom target to install SPDK to system
+# Include SPDK .deb packaging target
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/spdk_deb.cmake)
+
+# Add custom target to install SPDK to system via .deb package
 add_custom_target(spdk_install
-    COMMAND $(MAKE) install
-    COMMAND ldconfig
-    WORKING_DIRECTORY ${spdk_SOURCE_DIR}
-    COMMENT "Installing SPDK artifacts"
-    DEPENDS build_spdk
+    COMMAND apt install -y ${CMAKE_CURRENT_BINARY_DIR}/spdk_${SPDK_VERSION}_amd64.deb
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Installing SPDK .deb package"
+    # DEPENDS spdk_deb
 )
 
-# Add custom target to create .deb package without installing to system
-# Uses DESTDIR staging with dpkg-deb - no extra tools required
-set(SPDK_VERSION "26.01")
-set(SPDK_PKG_DIR ${CMAKE_CURRENT_BINARY_DIR}/spdk-pkg)
-
-# Create the DEBIAN control file content
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/spdk-control.txt
-"Package: spdk
-Version: ${SPDK_VERSION}
-Section: libs
-Priority: optional
-Architecture: amd64
-Depends: libc6, libnuma1, libssl3t64 | libssl3, libaio1t64 | libaio1, libfuse3-3, libuuid1, libiscsi7
-Maintainer: maintainer@example.com
-Description: Storage Performance Development Kit (SPDK) - custom build
-")
-
-add_custom_target(spdk_deb
-    # Clean previous package directory
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${SPDK_PKG_DIR}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SPDK_PKG_DIR}/DEBIAN
-    # Install SPDK to staging directory (skip Python which doesn't respect DESTDIR)
-    COMMAND ${CMAKE_COMMAND} -E env DESTDIR=${SPDK_PKG_DIR} $(MAKE) -C ${spdk_SOURCE_DIR}/lib install
-    COMMAND ${CMAKE_COMMAND} -E env DESTDIR=${SPDK_PKG_DIR} $(MAKE) -C ${spdk_SOURCE_DIR}/module install
-    COMMAND ${CMAKE_COMMAND} -E env DESTDIR=${SPDK_PKG_DIR} $(MAKE) -C ${spdk_SOURCE_DIR}/shared_lib install
-    COMMAND ${CMAKE_COMMAND} -E env DESTDIR=${SPDK_PKG_DIR} $(MAKE) -C ${spdk_SOURCE_DIR}/include install
-    COMMAND ${CMAKE_COMMAND} -E env DESTDIR=${SPDK_PKG_DIR} $(MAKE) -C ${spdk_SOURCE_DIR}/app install
-    # Install DPDK to staging directory
-    COMMAND ${CMAKE_COMMAND} -E env DESTDIR=${SPDK_PKG_DIR} ninja -C ${spdk_SOURCE_DIR}/dpdk/build-tmp install
-    # Move DPDK files from build prefix to /usr/local (DPDK uses absolute prefix path)
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${SPDK_PKG_DIR}${spdk_SOURCE_DIR}/dpdk/build ${SPDK_PKG_DIR}/usr/local
-    COMMAND ${CMAKE_COMMAND} -E remove_directory ${SPDK_PKG_DIR}/home
-    # Install bundled ISA-L library if it was built (depends on nasm being present during configure)
-    COMMAND ${CMAKE_COMMAND} -DSRC=${spdk_SOURCE_DIR}/isa-l/.libs/libisal.so.2 -DDST=${SPDK_PKG_DIR}/usr/local/lib -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_exists.cmake
-    # Copy control file
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/spdk-control.txt ${SPDK_PKG_DIR}/DEBIAN/control
-    # Build the .deb package
-    COMMAND dpkg-deb --build ${SPDK_PKG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/spdk_${SPDK_VERSION}_amd64.deb
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Creating SPDK .deb package (staged, no system install)"
-    DEPENDS build_spdk
+# Add custom target to uninstall SPDK package
+add_custom_target(spdk_uninstall
+    COMMAND apt remove -y spdk
+    COMMENT "Uninstalling SPDK package"
 )
