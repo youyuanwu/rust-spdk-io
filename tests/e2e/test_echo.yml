@@ -3,6 +3,8 @@
   hosts: test_vm
   gather_facts: false
   vars:
+    dpdk_deb_local: "{{ playbook_dir }}/../../build/dpdk-net_25.11.0_amd64.deb"
+    dpdk_deb_remote: "/tmp/dpdk-net_25.11.0_amd64.deb"
     spdk_deb_local: "{{ playbook_dir }}/../../build/spdk_26.01_amd64.deb"
     spdk_deb_remote: "/tmp/spdk_26.01_amd64.deb"
 
@@ -14,6 +16,34 @@
     - name: Display echo output
       ansible.builtin.debug:
         msg: "{{ echo_result.stdout }}"
+
+    # DPDK deb installation with hash check (must be installed before SPDK)
+    - name: Get local DPDK deb checksum
+      delegate_to: localhost
+      ansible.builtin.stat:
+        path: "{{ dpdk_deb_local }}"
+        checksum_algorithm: sha256
+      register: local_dpdk_deb_stat
+
+    - name: Check if DPDK deb exists on remote
+      ansible.builtin.stat:
+        path: "{{ dpdk_deb_remote }}"
+        checksum_algorithm: sha256
+      register: remote_dpdk_deb_stat
+
+    - name: Copy DPDK deb to VM
+      ansible.builtin.copy:
+        src: "{{ dpdk_deb_local }}"
+        dest: "{{ dpdk_deb_remote }}"
+        mode: '0644'
+      when: not remote_dpdk_deb_stat.stat.exists or remote_dpdk_deb_stat.stat.checksum != local_dpdk_deb_stat.stat.checksum
+
+    - name: Install DPDK deb package
+      become: true
+      ansible.builtin.apt:
+        deb: "{{ dpdk_deb_remote }}"
+        state: present
+      when: not remote_dpdk_deb_stat.stat.exists or remote_dpdk_deb_stat.stat.checksum != local_dpdk_deb_stat.stat.checksum
 
     # SPDK deb installation with hash check
     - name: Get local SPDK deb checksum

@@ -11,8 +11,6 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
-      CC: "sccache gcc"
-      CXX: "sccache g++"
     steps:
     - uses: actions/checkout@v6
 
@@ -30,9 +28,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y meson ninja-build python3-pyelftools
+        # Install RDMA dev packages for DPDK pkg-config dependencies
+        sudo apt-get install -y libibverbs-dev librdmacm-dev libelf-dev
 
     - name: Configure cmake
       run: cmake -S . -B build
+
+    - name: Install DPDK
+      run: |
+        sudo apt-get install -y ./build/dpdk-net_25.11.0_amd64.deb
+        sudo ldconfig
 
     - name: SPDK dependencies
       run: |
@@ -41,14 +46,7 @@ jobs:
     - name: Build and install spdk
       run: |
         cmake --build build --target configure_spdk
-        cmake --build build --target build_spdk --parallel --verbose
-
-    - name: Debug - Check spdk_lspci dependencies
-      run: |
-        echo "=== ldd spdk_lspci ==="
-        ldd build/spdk-src/build/bin/spdk_lspci || true
-        echo "=== Check for isal ==="
-        ldd build/spdk-src/build/bin/spdk_lspci 2>&1 | grep -i isal || echo "No isal dependency found"
+        cmake --build build --target build_spdk --parallel
 
     - name: Build SPDK deb package
       run: |
@@ -59,6 +57,14 @@ jobs:
       with:
         name: spdk-deb
         path: build/spdk_26.01_amd64.deb
+        if-no-files-found: error
+        retention-days: 2
+
+    - name: Upload DPDK deb artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: dpdk-deb
+        path: build/dpdk-net_25.11.0_amd64.deb
         if-no-files-found: error
         retention-days: 2
 
@@ -160,6 +166,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: spdk-deb
+          path: build
+
+      - name: Download DPDK deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dpdk-deb
           path: build
 
       - name: Run E2E tests
