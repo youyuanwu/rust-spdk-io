@@ -1,17 +1,11 @@
 [package]
-name = "spdk-io-sys"
+name = "spdk-io-build"
 version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 repository.workspace = true
 license.workspace = true
-build = "build.rs"
-links = "spdk"
+description = "Build helper utilities for SPDK Rust bindings with proper whole-archive support"
 
 [dependencies]
-
-[build-dependencies]
-bindgen = "0.72"
-pkg-config = "0.3"
-spdk-io-build = { path = "../spdk-io-build" }

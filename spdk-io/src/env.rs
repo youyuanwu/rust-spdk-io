@@ -27,6 +27,24 @@ use spdk_io_sys::*;
 
 use crate::error::{Error, Result};
 
+/// SPDK log level for controlling verbosity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum LogLevel {
+    /// Disable all logging
+    Disabled = spdk_log_level_SPDK_LOG_DISABLED,
+    /// Error messages only
+    Error = spdk_log_level_SPDK_LOG_ERROR,
+    /// Warnings and errors
+    Warn = spdk_log_level_SPDK_LOG_WARN,
+    /// Notices, warnings, and errors (default)
+    Notice = spdk_log_level_SPDK_LOG_NOTICE,
+    /// Info, notices, warnings, and errors
+    Info = spdk_log_level_SPDK_LOG_INFO,
+    /// Debug - all messages (very verbose)
+    Debug = spdk_log_level_SPDK_LOG_DEBUG,
+}
+
 /// Global flag to track if SPDK environment is initialized
 static ENV_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -87,6 +105,7 @@ pub struct SpdkEnvBuilder {
     no_huge: bool,
     hugepage_single_segments: bool,
     main_core: Option<i32>,
+    log_level: Option<LogLevel>,
 }
 
 impl SpdkEnvBuilder {
@@ -101,6 +120,7 @@ impl SpdkEnvBuilder {
             no_huge: false,
             hugepage_single_segments: false,
             main_core: None,
+            log_level: None,
         }
     }
 
@@ -159,6 +179,15 @@ impl SpdkEnvBuilder {
         self
     }
 
+    /// Set the log level for SPDK messages printed to stderr.
+    ///
+    /// Use [`LogLevel::Debug`] for verbose output during development.
+    /// Default is [`LogLevel::Notice`].
+    pub fn log_level(mut self, level: LogLevel) -> Self {
+        self.log_level = Some(level);
+        self
+    }
+
     /// Initialize the SPDK environment with the configured options.
     ///
     /// # Errors
@@ -205,6 +234,11 @@ impl SpdkEnvBuilder {
             opts.no_pci = self.no_pci;
             opts.no_huge = self.no_huge;
             opts.hugepage_single_segments = self.hugepage_single_segments;
+
+            // Set log level before init if requested
+            if let Some(level) = self.log_level {
+                spdk_log_set_print_level(level as i32);
+            }
 
             // Initialize SPDK environment
             let rc = spdk_env_init(&opts);

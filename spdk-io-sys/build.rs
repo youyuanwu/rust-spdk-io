@@ -6,40 +6,10 @@
 //! Environment variables:
 //! - `PKG_CONFIG_PATH`: Must include SPDK's pkg-config directory (e.g., /opt/spdk/lib/pkgconfig)
 
-use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
 
-/// System libraries that should be linked dynamically (not with --whole-archive)
-const SYSTEM_LIBS: &[&str] = &[
-    "crypto",
-    "ssl",
-    "numa",
-    "uuid",
-    "aio",
-    "dl",
-    "m",
-    "rt",
-    "pthread",
-    "uring",
-    "pcap",
-    "ibverbs",
-    "rdmacm",
-    "mlx5",
-    "keyutils",
-    "isal",
-    "isal_crypto",
-];
-
-fn is_system_lib(name: &str) -> bool {
-    SYSTEM_LIBS.contains(&name)
-}
-
-/// Check if this is a colon-prefixed archive name like `:librte_foo.a`
-/// These are duplicates of the regular lib names and should be skipped
-fn is_archive_name(name: &str) -> bool {
-    name.starts_with(':') || name.ends_with(".a")
-}
+use spdk_io_build::{COMMON_SYSTEM_LIBS, PkgConfigParser};
 
 fn main() {
     println!("cargo:rerun-if-changed=wrapper.h");
@@ -61,83 +31,39 @@ fn main() {
         "spdk_event",
         "spdk_bdev_malloc",
         "spdk_bdev_null",
-        "libdpdk", // Include for Libs.private (numa, dl, m, pthread)
+        "libdpdk",
+        "spdk_syslibs", // System dependencies (isal, ssl, crypto, uuid, fuse3, aio, etc.)
     ];
 
-    // Use pkg-config to get include paths and link flags (static mode)
+    // Get include paths using pkg_config crate (for bindgen)
     let mut include_paths = Vec::new();
-    let mut link_paths = HashSet::new();
-    let mut spdk_dpdk_libs = HashSet::new();
-    let mut system_libs = HashSet::new();
-
     for lib in &spdk_libs {
-        let library = pkg_config::Config::new()
-            .statik(true)  // Request static libraries
-            .env_metadata(true)
-            .probe(lib)
-            .unwrap_or_else(|e| panic!("Failed to find {}: {}. Set PKG_CONFIG_PATH to include SPDK's pkg-config directory.", lib, e));
-
-        for path in &library.include_paths {
-            if !include_paths.contains(path) {
-                include_paths.push(path.clone());
-            }
-        }
-        for path in &library.link_paths {
-            link_paths.insert(path.clone());
-        }
-        for lib_name in &library.libs {
-            // Skip colon-prefixed archive names like `:librte_foo.a` - these are duplicates
-            if is_archive_name(lib_name) {
-                continue;
-            }
-            if is_system_lib(lib_name) {
-                system_libs.insert(lib_name.clone());
-            } else {
-                spdk_dpdk_libs.insert(lib_name.clone());
-            }
-        }
-    }
-
-    // System dependencies not in SPDK's pkg-config - probe via pkg-config
-    let extra_system_pkgs = [
-        ("libssl", "ssl"),                 // OpenSSL
-        ("libcrypto", "crypto"),           // OpenSSL crypto
-        ("libisal", "isal"),               // ISA-L (may be at /opt/spdk/lib/pkgconfig)
-        ("libisal_crypto", "isal_crypto"), // ISA-L crypto
-        ("uuid", "uuid"),                  // libuuid
-    ];
-    for (pkg_name, lib_name) in &extra_system_pkgs {
-        if pkg_config::Config::new()
+        if let Ok(library) = pkg_config::Config::new()
             .statik(true)
-            .probe(pkg_name)
-            .is_ok()
+            .cargo_metadata(false) // Don't emit link flags - we'll do it manually
+            .probe(lib)
         {
-            // pkg-config handled it
-        } else {
-            // Fallback to direct linking
-            system_libs.insert(lib_name.to_string());
+            for path in &library.include_paths {
+                if !include_paths.contains(path) {
+                    include_paths.push(path.clone());
+                }
+            }
         }
     }
-    // libaio doesn't have pkg-config
-    system_libs.insert("aio".to_string());
 
-    // Emit link search paths
-    for path in &link_paths {
-        println!("cargo:rustc-link-search=native={}", path.display());
-    }
+    // Call pkg-config and emit linker flags using spdk-io-build helper
+    // This preserves --whole-archive for SPDK/DPDK static libs (needed for RTE_INIT constructors)
+    let pkg_config_path =
+        env::var("PKG_CONFIG_PATH").unwrap_or_else(|_| "/opt/spdk/lib/pkgconfig".to_string());
 
-    // Link SPDK/DPDK static libs with --whole-archive to include all symbols
-    // This ensures callback tables and other statically-initialized data are included
-    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
-    for lib in &spdk_dpdk_libs {
-        println!("cargo:rustc-link-lib=static={}", lib);
-    }
-    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+    let parser = PkgConfigParser::new().system_libs(COMMON_SYSTEM_LIBS);
 
-    // Link system libraries normally (dynamic)
-    for lib in &system_libs {
-        println!("cargo:rustc-link-lib={}", lib);
-    }
+    parser
+        .probe_and_emit(spdk_libs, Some(&pkg_config_path))
+        .expect("pkg-config failed");
+
+    // lz4 - not in spdk_syslibs, use explicit versioned name since there may be no .so symlink
+    // println!("cargo:rustc-link-arg=-l:liblz4.so.1");
 
     // Build clang args for bindgen
     let clang_args: Vec<String> = include_paths

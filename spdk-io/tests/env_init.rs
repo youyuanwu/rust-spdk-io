@@ -14,6 +14,7 @@ fn test_env_init_vdev() -> Result<()> {
         .no_pci(true)
         .no_huge(true)
         .mem_size_mb(64)
+        .log_level(spdk_io::LogLevel::Debug)
         .build()?;
 
     assert!(SpdkEnv::is_initialized());

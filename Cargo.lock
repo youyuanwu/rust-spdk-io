@@ -212,11 +212,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spdk-io-build"
+version = "0.1.0"
+
+[[package]]
 name = "spdk-io-sys"
 version = "0.1.0"
 dependencies = [
  "bindgen",
  "pkg-config",
+ "spdk-io-build",
 ]
 
 [[package]]

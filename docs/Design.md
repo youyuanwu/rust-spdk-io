@@ -4,6 +4,61 @@
 
 `spdk-io` is a Rust library providing safe, ergonomic, async-first bindings to SPDK (Storage Performance Development Kit). The library enables Rust applications to leverage SPDK's high-performance user-space storage stack with native async/await syntax.
 
+## Implementation Status
+
+### Completed
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **spdk-io-sys crate** | ✅ | FFI bindings via bindgen |
+| - pkg-config integration | ✅ | Static linking with `--whole-archive` |
+| - bindgen generation | ✅ | Rust 2024 compatible, `wrap_unsafe_ops(true)` |
+| - System deps handling | ✅ | Filters archive names, probes OpenSSL/ISA-L/uuid |
+| **spdk-io crate** | 🟡 | Core types implemented |
+| - `SpdkEnv` | ✅ | Environment guard with RAII cleanup |
+| - `SpdkEnvBuilder` | ✅ | Full configuration: name, core_mask, mem_size, shm_id, no_pci, no_huge, main_core |
+| - `Error` types | ✅ | Comprehensive error enum with thiserror |
+| - Integration tests | ✅ | vdev mode (no hugepages required) |
+| **CI/CD** | ✅ | GitHub Actions with SPDK deb package |
+
+### In Progress
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `SpdkThread` | ⏳ | Thread context management |
+| `IoChannel` | ⏳ | Thread-local I/O channels |
+| SPDK poller task | ⏳ | Async executor integration |
+
+### Planned
+
+| Component | Notes |
+|-----------|-------|
+| `Bdev` / `BdevDesc` | Block device API with async read/write |
+| `DmaBuf` | DMA-capable buffer allocation |
+| `Blobstore` / `Blob` | Blobstore API |
+| `NvmeController` | Direct NVMe access |
+| Callback-to-future utilities | `oneshot` channel pattern |
+
+### Build & Linking
+
+The crate uses **static linking** with `--whole-archive` for SPDK/DPDK libraries:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  spdk-io-sys build.rs                                       │
+├─────────────────────────────────────────────────────────────┤
+│  1. pkg-config probes SPDK libs (statik=true)               │
+│  2. Separates SPDK/DPDK libs from system libs               │
+│  3. Emits --whole-archive for SPDK/DPDK (include all syms)  │
+│  4. Links system libs normally (ssl, crypto, numa, etc.)    │
+│  5. bindgen generates Rust bindings from wrapper.h          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why static linking?** SPDK uses callback tables and static initializers that would be
+dropped by the linker with `--as-needed`. Using `--whole-archive` ensures all symbols
+are included in the final binary.
+
 ## Crate Structure
 
 ```
@@ -182,9 +237,18 @@ fn main() {
     // Initialize SPDK environment (hugepages, PCI, etc.)
     let _env = SpdkEnv::builder()
         .name("my_app")
-        .hugepage_mb(2048)
-        .init()
+        .mem_size_mb(2048)
+        .build()
         .expect("Failed to init SPDK");
+    
+    // For testing without hugepages (vdev mode):
+    // let _env = SpdkEnv::builder()
+    //     .name("test")
+    //     .no_pci(true)
+    //     .no_huge(true)
+    //     .mem_size_mb(64)
+    //     .build()
+    //     .expect("Failed to init SPDK");
     
     // Attach SPDK thread context to current OS thread (no new thread created)
     let spdk_thread = SpdkThread::current("worker-0").expect("Failed to attach SPDK thread");
@@ -232,7 +296,7 @@ async fn run_app(thread: &SpdkThread) -> Result<(), SpdkError> {
 use smol::LocalExecutor;
 
 fn main() {
-    let _env = SpdkEnv::builder().name("app").init().unwrap();
+    let _env = SpdkEnv::builder().name("app").build().unwrap();
     let spdk_thread = SpdkThread::current("worker").unwrap();
     
     let ex = LocalExecutor::new();
@@ -248,7 +312,7 @@ fn main() {
 use async_executor::LocalExecutor;
 
 fn main() {
-    let _env = SpdkEnv::builder().name("app").init().unwrap();
+    let _env = SpdkEnv::builder().name("app").build().unwrap();
     let spdk_thread = SpdkThread::current("worker").unwrap();
     
     let ex = LocalExecutor::new();
@@ -299,17 +363,26 @@ impl Drop for SpdkEnv {
 
 /// Builder for configuring SPDK environment
 pub struct SpdkEnvBuilder {
-    name: String,
-    hugepage_mb: Option<u32>,
+    name: Option<String>,
     core_mask: Option<String>,
-    // ... other DPDK EAL options
+    mem_size_mb: Option<i32>,
+    shm_id: Option<i32>,
+    no_pci: bool,
+    no_huge: bool,
+    hugepage_single_segments: bool,
+    main_core: Option<i32>,
 }
 
 impl SpdkEnvBuilder {
     pub fn name(self, name: &str) -> Self;
-    pub fn hugepage_mb(self, mb: u32) -> Self;
     pub fn core_mask(self, mask: &str) -> Self;
-    pub fn init(self) -> Result<SpdkEnv>;
+    pub fn mem_size_mb(self, mb: i32) -> Self;
+    pub fn shm_id(self, id: i32) -> Self;
+    pub fn no_pci(self, no_pci: bool) -> Self;
+    pub fn no_huge(self, no_huge: bool) -> Self;  // vdev mode - no hugepages
+    pub fn hugepage_single_segments(self, single: bool) -> Self;
+    pub fn main_core(self, core: i32) -> Self;
+    pub fn build(self) -> Result<SpdkEnv>;
 }
 ```
 
@@ -633,10 +706,13 @@ mod tests {
         F: FnOnce(&SpdkThread) -> T
     {
         // In real tests, use lazy_static or ctor for one-time init
+        // Use no_huge for CI without hugepage configuration
         let _env = SpdkEnv::builder()
             .name("test")
-            .hugepage_mb(64)  // Minimal for tests
-            .init()
+            .no_pci(true)
+            .no_huge(true)
+            .mem_size_mb(64)
+            .build()
             .unwrap();
         
         let thread = SpdkThread::current("test").unwrap();

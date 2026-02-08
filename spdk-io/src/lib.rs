@@ -23,11 +23,14 @@
 //! # Modules
 //!
 //! - [`env`] - Environment initialization
+//! - [`thread`] - SPDK thread management
 //! - [`error`] - Error types
 
 pub mod env;
 pub mod error;
+pub mod thread;
 
 // Re-exports
-pub use env::{SpdkEnv, SpdkEnvBuilder};
+pub use env::{LogLevel, SpdkEnv, SpdkEnvBuilder};
 pub use error::{Error, Result};
+pub use thread::{CurrentThread, SpdkThread};

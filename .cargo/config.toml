@@ -1,1 +1,8 @@
 # Static linking handles all dependencies - no extra rustflags needed
+# Run tests with single thread (SPDK can only init once per process)
+[env]
+RUST_TEST_THREADS = "1"
+
+# Run test binaries with sudo (required for SPDK hugepages access)
+[target.x86_64-unknown-linux-gnu]
+# runner = "sudo -E"

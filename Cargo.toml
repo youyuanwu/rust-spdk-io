@@ -1,8 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-  "spdk-io"
-, "spdk-io-sys", "spdk-io-test"]
+  "spdk-io",
+  "spdk-io-sys",
+  "spdk-io-build",
+  "spdk-io-test",
+]
 package.edition = "2024"
 package.authors = [ "youyuanwu@outlook.com" ]
 package.documentation = "https://github.com/youyuanwu/rust-spdk-io"
