@@ -71,3 +71,56 @@
     - `EnvOpts` + `init_env()` for environment initialization
     - Macros: `ns_data!`, `ctrlr_data!` for accessing struct fields
   - **Multi-threading**: No threading abstractions, minimal env init only
+
+---
+
+## Features Not Yet Implemented in spdk-io
+
+Based on analysis of the reference projects above, the following features are available in other projects but not yet implemented in spdk-io:
+
+### High Priority (commonly used)
+
+| Feature | Description | Reference |
+|---------|-------------|-----------|
+| **Blobstore API** | `Blobstore`, `Blob`, `BlobId` - key-value store on block device | async-spdk |
+| **BlobFs API** | `SpdkFilesystem`, `SpdkFile` - POSIX-like filesystem on blobstore | async-spdk |
+| **Poller API** | `Poller::register()`, `pause()`, `resume()` - periodic callback registration | spdk-rs, async-spdk |
+| **CpuMask/CpuSet** | CPU affinity mask for pinning threads to specific cores | spdk-rs, async-spdk |
+| **Thread::create(name, cpumask)** | Create SPDK thread pinned to specific CPU core | spdk-rs, async-spdk |
+
+### Medium Priority (advanced use cases)
+
+| Feature | Description | Reference |
+|---------|-------------|-----------|
+| **Custom Bdev Module** | `BdevModuleBuilder`, `BdevBuilder`, `BdevOps` trait - create virtual block devices | spdk-rs |
+| **IoDevice trait** | `register_io_device()`, `unregister_io_device()` - custom I/O device registration | spdk-rs |
+| **IoDeviceChannelTraverse** | `traverse_io_channels()` - iterate over all I/O channels via `spdk_for_each_channel` | spdk-rs |
+| **Bdev Iterator** | `Bdev::iter_all()`, `BdevModuleIter` - enumerate all bdevs | spdk-rs |
+| **Bdev Stats** | `stats_async()`, `reset_stats()` - device I/O statistics | spdk-rs |
+| **LBA Range Locking** | `LbaRange`, `LbaRangeLock` - lock LBA ranges for exclusive access | spdk-rs |
+
+### Lower Priority (specialized)
+
+| Feature | Description | Reference |
+|---------|-------------|-----------|
+| **RoundRobinCoreSelector** | Load balancing across CPU cores | spdk-rs |
+| **CurrentThreadGuard** | RAII guard for saving/restoring current SPDK thread context | spdk-rs |
+| **Thread::spawn_unaffinitized()** | Spawn OS thread with inverse CPU affinity | spdk-rs |
+| **Generic Bdev<BdevData>** | Type-parameterized bdev wrapper for custom data | spdk-rs |
+| **IoVec wrapper** | `IoVec`, `AsIoVecPtr`, `AsIoVecs` traits for scatter-gather I/O | spdk-rs |
+| **JsonWriteContext** | JSON serialization for config export | spdk-rs |
+| **NvmfController/Subsystem** | NVMe-oF target management | spdk-rs |
+
+### Already Implemented in spdk-io ✅
+
+| Feature | Status |
+|---------|--------|
+| `SpdkApp` / `SpdkAppBuilder` | ✅ Done |
+| `SpdkEvent::call_on()` / `call_on_async()` | ✅ Done |
+| `Cores` / `CoreIterator` | ✅ Done |
+| `SpdkThread` / `ThreadHandle` | ✅ Done |
+| `NvmeController` / `NvmeQpair` / `NvmeNamespace` | ✅ Done |
+| `DmaBuf` (DMA buffer allocation) | ✅ Done |
+| `Bdev` / `BdevDesc` / `IoChannel` | ✅ Done |
+| `TransportId` (PCIe, TCP, RDMA) | ✅ Done |
+| Async I/O with `CompletionReceiver` | ✅ Done |

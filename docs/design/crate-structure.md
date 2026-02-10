@@ -4,7 +4,7 @@
 
 ```
 spdk-io/
-├── spdk-io-build/        # Build helper crate
+├── pkgconf/              # Build helper crate
 │   └── src/lib.rs        # PkgConfigParser with force_whole_archive
 │
 ├── spdk-io-sys/          # Low-level FFI bindings

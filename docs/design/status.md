@@ -8,7 +8,7 @@
 | - pkg-config integration | ✅ | Static linking with `--whole-archive` |
 | - bindgen generation | ✅ | Rust 2024 compatible, `wrap_unsafe_ops(true)` |
 | - System deps handling | ✅ | Filters archive names, probes OpenSSL/ISA-L/uuid |
-| **spdk-io-build crate** | ✅ | Build helper for pkg-config parsing |
+| **pkgconf crate** | ✅ | Build helper for pkg-config parsing |
 | - `PkgConfigParser` | ✅ | Parses pkg-config with whole-archive region tracking |
 | - Static detection | ✅ | Auto-detects `.a` availability, excludes system roots |
 | - `force_whole_archive` | ✅ | Force whole-archive for specific libs (subsystem constructors) |

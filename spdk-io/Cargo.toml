@@ -6,14 +6,16 @@ authors.workspace = true
 documentation.workspace = true
 repository.workspace = true
 license.workspace = true
+description = "SPDK for Rust with async/await"
+readme = "../README.md"
 
 [dependencies]
-spdk-io-sys = { path = "../spdk-io-sys" }
-thiserror = "2"
-futures-channel = "0.3"
+spdk-io-sys.workspace = true
+thiserror.workspace = true
+futures-channel.workspace = true
 
 [dev-dependencies]
-futures-task = "0.3"
-futures = "0.3"
-futures-lite = "2"
-libc = "0.2"
+futures-task.workspace = true
+futures.workspace = true
+futures-lite.workspace = true
+libc.workspace = true

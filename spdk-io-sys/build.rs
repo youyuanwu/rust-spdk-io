@@ -9,7 +9,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use spdk_io_build::PkgConfigParser;
+use pkgconf::PkgConfigParser;
 
 fn main() {
     println!("cargo:rerun-if-changed=wrapper.h");
@@ -57,7 +57,7 @@ fn main() {
         }
     }
 
-    // Call pkg-config and emit linker flags using spdk-io-build helper
+    // Call pkg-config and emit linker flags using pkgconf helper
     // This preserves --whole-archive for SPDK/DPDK static libs (needed for RTE_INIT constructors)
     let pkg_config_path =
         env::var("PKG_CONFIG_PATH").unwrap_or_else(|_| "/opt/spdk/lib/pkgconfig".to_string());

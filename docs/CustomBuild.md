@@ -72,10 +72,10 @@ We bypass this by parsing pkg-config output directly and emitting `rustc-link-li
 
 ### Implementation
 
-The `spdk-io-build` crate provides `PkgConfigParser` with `force_whole_archive()` support:
+The `pkgconf` crate provides `PkgConfigParser` with `force_whole_archive()` support:
 
 ```rust
-use spdk_io_build::PkgConfigParser;
+use pkgconf::PkgConfigParser;
 
 let parser = PkgConfigParser::new()
     .force_whole_archive([

@@ -3,7 +3,7 @@ resolver = "2"
 members = [
   "spdk-io",
   "spdk-io-sys",
-  "spdk-io-build",
+  "pkgconf",
   "spdk-io-test",
 ]
 package.edition = "2024"
@@ -13,8 +13,25 @@ package.repository = "https://github.com/youyuanwu/rust-spdk-io"
 package.license = "MIT"
 
 [workspace.dependencies]
+# Workspace crates
+spdk-io = { path = "spdk-io", version = "0.1.0" }
+spdk-io-sys = { path = "spdk-io-sys", version = "0.1.0" }
+pkgconf = { path = "pkgconf" , version = "0.1.0" }
+spdk-io-test = { path = "spdk-io-test" }
 
-# crate in this workspace
-# spdk-io = { path = "spdk-io", version = "0.1.0" }
-# spdk-sys = { path = "spdk-sys", version = "0.1.0" }
-# spdk-io-test = { path = "spdk-io-test" }
+# Error handling
+thiserror = "2"
+
+# Async/futures
+futures = "0.3"
+futures-channel = "0.3"
+futures-task = "0.3"
+futures-lite = "2"
+
+# Build dependencies
+bindgen = "0.72"
+pkg-config = "0.3"
+
+# Test dependencies
+tempfile = "3"
+libc = "0.2"

@@ -6,12 +6,13 @@ authors.workspace = true
 documentation.workspace = true
 repository.workspace = true
 license.workspace = true
+description = "Low-level FFI bindings for SPDK"
 build = "build.rs"
 links = "spdk"
 
 [dependencies]
 
 [build-dependencies]
-bindgen = "0.72"
-pkg-config = "0.3"
-spdk-io-build = { path = "../spdk-io-build" }
+bindgen.workspace = true
+pkg-config.workspace = true
+pkgconf.workspace = true

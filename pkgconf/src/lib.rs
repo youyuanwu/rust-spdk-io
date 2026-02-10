@@ -39,21 +39,21 @@
 //! # Example
 //!
 //! ```no_run
-//! use spdk_io_build::PkgConfigParser;
+//! use pkgconf::PkgConfigParser;
 //!
 //! // Basic usage with default settings
 //! let parser = PkgConfigParser::new();
 //!
 //! parser.probe_and_emit(
-//!     ["spdk_env_dpdk", "spdk_thread", "libdpdk", "spdk_syslibs"],
-//!     Some("/opt/spdk/lib/pkgconfig"),
+//!     ["openssl", "libfoo"],
+//!     None,
 //! ).expect("pkg-config failed");
 //! ```
 //!
 //! # Customization
 //!
 //! ```no_run
-//! use spdk_io_build::PkgConfigParser;
+//! use pkgconf::PkgConfigParser;
 //!
 //! let parser = PkgConfigParser::new()
 //!     // Add additional system roots (libs here link dynamically)
@@ -129,12 +129,12 @@ pub enum LinkerFlag {
 /// # Usage
 ///
 /// ```no_run
-/// use spdk_io_build::PkgConfigParser;
+/// use pkgconf::PkgConfigParser;
 ///
 /// PkgConfigParser::new()
 ///     .probe_and_emit(
-///         ["spdk_env_dpdk", "libdpdk"],
-///         Some("/opt/spdk/lib/pkgconfig"),
+///         ["openssl", "libfoo"],
+///         None,
 ///     )
 ///     .expect("pkg-config failed");
 /// ```
@@ -212,7 +212,7 @@ impl PkgConfigParser {
     /// # Example
     ///
     /// ```
-    /// use spdk_io_build::PkgConfigParser;
+    /// use pkgconf::PkgConfigParser;
     ///
     /// let parser = PkgConfigParser::new()
     ///     .system_roots(["/usr", "/usr/local", "/opt/homebrew"]);
@@ -231,20 +231,18 @@ impl PkgConfigParser {
     /// These libraries will be linked with [`LinkKind::WholeArchive`] even if
     /// they don't appear inside a `--whole-archive` region in the pkg-config
     /// output. This is necessary for libraries that use constructor functions
-    /// (like SPDK event subsystem registration with `SPDK_SUBSYSTEM_REGISTER`)
+    /// (like `__attribute__((constructor))` or DPDK's `RTE_INIT` macros)
     /// where the symbols would otherwise be discarded by the linker.
     ///
     /// # Example
     ///
     /// ```
-    /// use spdk_io_build::PkgConfigParser;
+    /// use pkgconf::PkgConfigParser;
     ///
-    /// // Force whole-archive for SPDK event subsystem libraries
+    /// // Force whole-archive for libraries with constructor functions
     /// let parser = PkgConfigParser::new()
     ///     .force_whole_archive([
-    ///         "spdk_event_bdev",
-    ///         "spdk_event_accel",
-    ///         "spdk_event_sock",
+    ///         "mylib_with_constructors",
     ///     ]);
     /// ```
     pub fn force_whole_archive<I, S>(mut self, libs: I) -> Self
@@ -506,12 +504,12 @@ impl PkgConfigParser {
     /// # Example
     ///
     /// ```no_run
-    /// use spdk_io_build::PkgConfigParser;
+    /// use pkgconf::PkgConfigParser;
     ///
     /// PkgConfigParser::new()
     ///     .probe_and_emit(
-    ///         ["spdk_env_dpdk", "spdk_thread", "libdpdk", "spdk_syslibs"],
-    ///         Some("/opt/spdk/lib/pkgconfig"),
+    ///         ["openssl", "libfoo"],
+    ///         None,
     ///     )
     ///     .expect("pkg-config failed");
     /// ```
@@ -538,7 +536,7 @@ impl PkgConfigParser {
     /// # Example
     ///
     /// ```no_run
-    /// use spdk_io_build::{PkgConfigParser, LinkKind};
+    /// use pkgconf::{PkgConfigParser, LinkKind};
     ///
     /// let parser = PkgConfigParser::new();
     /// parser.add_extra_lib("custom_lib", LinkKind::Static);
