@@ -41,24 +41,7 @@ fn main() {
         "spdk_syslibs", // System dependencies (isal, ssl, crypto, uuid, fuse3, aio, etc.)
     ];
 
-    // Get include paths using pkg_config crate (for bindgen)
-    let mut include_paths = Vec::new();
-    for lib in &spdk_libs {
-        if let Ok(library) = pkg_config::Config::new()
-            .statik(true)
-            .cargo_metadata(false) // Don't emit link flags - we'll do it manually
-            .probe(lib)
-        {
-            for path in &library.include_paths {
-                if !include_paths.contains(path) {
-                    include_paths.push(path.clone());
-                }
-            }
-        }
-    }
-
-    // Call pkg-config and emit linker flags using pkgconf helper
-    // This preserves --whole-archive for SPDK/DPDK static libs (needed for RTE_INIT constructors)
+    // PKG_CONFIG_PATH for SPDK installation
     let pkg_config_path =
         env::var("PKG_CONFIG_PATH").unwrap_or_else(|_| "/opt/spdk/lib/pkgconfig".to_string());
 
@@ -83,18 +66,16 @@ fn main() {
         "spdk_nvme",       // NVMe initiator with transport registrations (TCP, RDMA, etc.)
     ]);
 
-    parser
-        .probe_and_emit(spdk_libs, Some(&pkg_config_path))
+    // Single probe call: parses both --libs and --cflags
+    let pkg = parser
+        .probe(spdk_libs, Some(&pkg_config_path))
         .expect("pkg-config failed");
 
-    // lz4 - not in spdk_syslibs, use explicit versioned name since there may be no .so symlink
-    // println!("cargo:rustc-link-arg=-l:liblz4.so.1");
+    // Emit cargo linker directives (no_bundle=true for -sys crate with `links` key)
+    pkgconf::emit_cargo_metadata(&pkg.libs, true);
 
-    // Build clang args for bindgen
-    let clang_args: Vec<String> = include_paths
-        .iter()
-        .map(|p| format!("-I{}", p.display()))
-        .collect();
+    // Build clang args for bindgen from parsed cflags
+    let clang_args = pkgconf::to_clang_args(&pkg.cflags);
 
     // Generate bindings
     let bindings = bindgen::Builder::default()

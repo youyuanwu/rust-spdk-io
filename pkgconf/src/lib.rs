@@ -14,7 +14,8 @@
 //! - **Tracks `--whole-archive` regions** from the pkg-config output
 //! - **Auto-detects static library availability** by checking if `lib<name>.a` exists
 //! - **Excludes system directories** (default: `/usr`) so system libs link dynamically
-//! - **Emits correct cargo link directives** with proper modifiers (`static:`, `+whole-archive`, `-bundle`)
+//! - **Produces structured types** ([`LinkerFlag`], [`CompilerFlag`]) that can be converted
+//!   to cargo metadata directives or clang arguments for bindgen
 //!
 //! # How Static Detection Works
 //!
@@ -41,13 +42,15 @@
 //! ```no_run
 //! use pkgconf::PkgConfigParser;
 //!
-//! // Basic usage with default settings
-//! let parser = PkgConfigParser::new();
+//! let pkg = PkgConfigParser::new()
+//!     .probe(["openssl", "libfoo"], None)
+//!     .expect("pkg-config failed");
 //!
-//! parser.probe_and_emit(
-//!     ["openssl", "libfoo"],
-//!     None,
-//! ).expect("pkg-config failed");
+//! // Emit cargo linker directives (no_bundle=true for -sys crates)
+//! pkgconf::emit_cargo_metadata(&pkg.libs, true);
+//!
+//! // Get clang args for bindgen
+//! let clang_args = pkgconf::to_clang_args(&pkg.cflags);
 //! ```
 //!
 //! # Customization
@@ -58,8 +61,8 @@
 //! let parser = PkgConfigParser::new()
 //!     // Add additional system roots (libs here link dynamically)
 //!     .system_roots(["/usr", "/usr/local"])
-//!     // Disable -bundle modifier (for non -sys crates)
-//!     .no_bundle(false);
+//!     // Force whole-archive for libs with constructor functions
+//!     .force_whole_archive(["mylib_with_constructors"]);
 //! ```
 
 use std::collections::HashSet;
@@ -123,6 +126,177 @@ pub enum LinkerFlag {
     LinkerArg(String),
 }
 
+impl LinkerFlag {
+    /// Converts this flag to a cargo metadata directive string.
+    ///
+    /// `no_bundle` controls whether static libraries get the `-bundle` modifier.
+    /// This is a cargo/rustc concern (prevents re-exporting static libs through rlibs)
+    /// and is applied here at emit time, not during parsing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pkgconf::{LinkerFlag, LinkKind};
+    ///
+    /// let flag = LinkerFlag::SearchPath("/opt/spdk/lib".to_string());
+    /// assert_eq!(flag.to_cargo_directive(true), "cargo:rustc-link-search=native=/opt/spdk/lib");
+    ///
+    /// let flag = LinkerFlag::Library { name: "foo".to_string(), kind: LinkKind::Static };
+    /// assert_eq!(flag.to_cargo_directive(true), "cargo:rustc-link-lib=static:-bundle=foo");
+    /// assert_eq!(flag.to_cargo_directive(false), "cargo:rustc-link-lib=static=foo");
+    ///
+    /// let flag = LinkerFlag::Library { name: "bar".to_string(), kind: LinkKind::WholeArchive };
+    /// assert_eq!(flag.to_cargo_directive(true), "cargo:rustc-link-lib=static:+whole-archive,-bundle=bar");
+    /// assert_eq!(flag.to_cargo_directive(false), "cargo:rustc-link-lib=static:+whole-archive=bar");
+    /// ```
+    pub fn to_cargo_directive(&self, no_bundle: bool) -> String {
+        match self {
+            LinkerFlag::SearchPath(path) => {
+                format!("cargo:rustc-link-search=native={}", path)
+            }
+            LinkerFlag::Library { name, kind } => match kind {
+                LinkKind::Default => {
+                    format!("cargo:rustc-link-lib={}", name)
+                }
+                LinkKind::Static => {
+                    if no_bundle {
+                        format!("cargo:rustc-link-lib=static:-bundle={}", name)
+                    } else {
+                        format!("cargo:rustc-link-lib=static={}", name)
+                    }
+                }
+                LinkKind::WholeArchive => {
+                    if no_bundle {
+                        format!(
+                            "cargo:rustc-link-lib=static:+whole-archive,-bundle={}",
+                            name
+                        )
+                    } else {
+                        format!("cargo:rustc-link-lib=static:+whole-archive={}", name)
+                    }
+                }
+            },
+            LinkerFlag::LinkerArg(arg) => {
+                format!("cargo:rustc-link-arg={}", arg)
+            }
+        }
+    }
+}
+
+/// A parsed compiler flag from `pkg-config --cflags` output.
+///
+/// These flags are **not** consumed by cargo or rustc — they are used as
+/// clang arguments for bindgen when generating FFI bindings from C headers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompilerFlag {
+    /// Include search path (`-I/path/to/headers`).
+    ///
+    /// Passed to bindgen as `-I/path/to/headers` so clang can find
+    /// `#include <spdk/env.h>` etc.
+    IncludePath(PathBuf),
+
+    /// Preprocessor define (`-DFOO` or `-DFOO=bar`).
+    ///
+    /// Passed to bindgen as `-DFOO` or `-DFOO=bar`. Some libraries
+    /// (e.g., DPDK) emit defines like `-DRTE_MACHINE_CPUFLAG_SSE` that
+    /// affect which code paths are visible in headers.
+    Define {
+        /// The macro name.
+        key: String,
+        /// The macro value, if any.
+        value: Option<String>,
+    },
+}
+
+impl CompilerFlag {
+    /// Converts this flag to a clang argument string for bindgen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use pkgconf::CompilerFlag;
+    ///
+    /// let flag = CompilerFlag::IncludePath(PathBuf::from("/opt/spdk/include"));
+    /// assert_eq!(flag.to_clang_arg(), "-I/opt/spdk/include");
+    ///
+    /// let flag = CompilerFlag::Define { key: "FOO".to_string(), value: None };
+    /// assert_eq!(flag.to_clang_arg(), "-DFOO");
+    ///
+    /// let flag = CompilerFlag::Define { key: "FOO".to_string(), value: Some("1".to_string()) };
+    /// assert_eq!(flag.to_clang_arg(), "-DFOO=1");
+    /// ```
+    pub fn to_clang_arg(&self) -> String {
+        match self {
+            CompilerFlag::IncludePath(path) => format!("-I{}", path.display()),
+            CompilerFlag::Define { key, value: None } => format!("-D{}", key),
+            CompilerFlag::Define {
+                key,
+                value: Some(v),
+            } => format!("-D{}={}", key, v),
+        }
+    }
+}
+
+/// Converts a slice of [`CompilerFlag`]s to clang argument strings for bindgen.
+///
+/// # Example
+///
+/// ```
+/// use std::path::PathBuf;
+/// use pkgconf::{CompilerFlag, to_clang_args};
+///
+/// let flags = vec![
+///     CompilerFlag::IncludePath(PathBuf::from("/opt/spdk/include")),
+///     CompilerFlag::Define { key: "FOO".to_string(), value: None },
+/// ];
+/// let args = to_clang_args(&flags);
+/// assert_eq!(args, vec!["-I/opt/spdk/include", "-DFOO"]);
+/// ```
+pub fn to_clang_args(flags: &[CompilerFlag]) -> Vec<String> {
+    flags.iter().map(|f| f.to_clang_arg()).collect()
+}
+
+/// Converts a slice of [`LinkerFlag`]s to cargo metadata directive strings.
+///
+/// `no_bundle` controls whether static libraries get the `-bundle` modifier.
+/// Set to `true` for `-sys` crates that use the `links` key in `Cargo.toml`.
+pub fn to_cargo_directives(flags: &[LinkerFlag], no_bundle: bool) -> Vec<String> {
+    flags
+        .iter()
+        .map(|f| f.to_cargo_directive(no_bundle))
+        .collect()
+}
+
+/// Emits cargo metadata directives to stdout.
+///
+/// Convenience function that prints each directive from [`to_cargo_directives`].
+///
+/// `no_bundle` controls whether static libraries get the `-bundle` modifier.
+/// Set to `true` for `-sys` crates that use the `links` key in `Cargo.toml`.
+pub fn emit_cargo_metadata(flags: &[LinkerFlag], no_bundle: bool) {
+    for directive in to_cargo_directives(flags, no_bundle) {
+        println!("{directive}");
+    }
+}
+
+/// Parsed pkg-config output for a set of packages.
+///
+/// Contains structured linker flags (from `--libs`) and compiler flags
+/// (from `--cflags`). This is a pure data type — it holds what pkg-config
+/// reported, with no cargo/rustc/bindgen concerns baked in.
+///
+/// Use [`to_clang_args`] to convert `cflags` for bindgen, and
+/// [`emit_cargo_metadata`] or [`to_cargo_directives`] to convert `libs`
+/// for cargo.
+#[derive(Debug, Clone)]
+pub struct PkgConfig {
+    /// Linker flags from `pkg-config --static --libs`.
+    pub libs: Vec<LinkerFlag>,
+    /// Compiler flags from `pkg-config --cflags`.
+    pub cflags: Vec<CompilerFlag>,
+}
+
 /// Parser for pkg-config output that properly handles `--whole-archive` regions
 /// and auto-detects static library availability.
 ///
@@ -131,23 +305,18 @@ pub enum LinkerFlag {
 /// ```no_run
 /// use pkgconf::PkgConfigParser;
 ///
-/// PkgConfigParser::new()
-///     .probe_and_emit(
-///         ["openssl", "libfoo"],
-///         None,
-///     )
+/// let pkg = PkgConfigParser::new()
+///     .probe(["openssl", "libfoo"], None)
 ///     .expect("pkg-config failed");
+///
+/// // Emit cargo linker directives (no_bundle=true for -sys crates)
+/// pkgconf::emit_cargo_metadata(&pkg.libs, true);
+///
+/// // Get clang args for bindgen
+/// let clang_args = pkgconf::to_clang_args(&pkg.cflags);
 /// ```
 #[derive(Debug, Clone)]
 pub struct PkgConfigParser {
-    /// Whether to add `-bundle` modifier to static libraries.
-    ///
-    /// When `true` (default), emits `static:-bundle=` which prevents the
-    /// static library from being re-exported when this crate is used as
-    /// an rlib dependency. This is typically desired for `-sys` crates
-    /// that use the `links` key in `Cargo.toml`.
-    no_bundle: bool,
-
     /// Directories considered "system" roots.
     ///
     /// Libraries whose `.a` files are found under these directories will
@@ -175,28 +344,13 @@ impl PkgConfigParser {
     /// Creates a new parser with default settings.
     ///
     /// Defaults:
-    /// - `no_bundle`: `true` (adds `-bundle` modifier)
     /// - `system_roots`: `["/usr"]`
     /// - `force_whole_archive`: `[]` (empty)
     pub fn new() -> Self {
         Self {
-            no_bundle: true,
             system_roots: vec![PathBuf::from("/usr")],
             force_whole_archive: HashSet::new(),
         }
-    }
-
-    /// Sets whether to add the `-bundle` modifier to static libraries.
-    ///
-    /// When `true` (default), static libraries are emitted with `-bundle`
-    /// (e.g., `static:-bundle=foo`), which prevents them from being
-    /// re-exported when this crate is used as an rlib dependency.
-    ///
-    /// Set to `false` if you want downstream crates to also link against
-    /// these static libraries.
-    pub fn no_bundle(mut self, enabled: bool) -> Self {
-        self.no_bundle = enabled;
-        self
     }
 
     /// Sets the system root directories.
@@ -254,17 +408,19 @@ impl PkgConfigParser {
         self
     }
 
-    /// Runs `pkg-config --static --libs` and returns the raw output.
+    /// Runs `pkg-config` with the given arguments and returns the raw output.
     ///
     /// # Arguments
     ///
+    /// * `args` - Arguments to pass before the package names (e.g., `["--static", "--libs"]`)
     /// * `packages` - Package names to query (e.g., `["spdk_env_dpdk", "libdpdk"]`)
     /// * `pkg_config_path` - Optional path to set as `PKG_CONFIG_PATH` environment variable
     ///
     /// # Errors
     ///
     /// Returns an error if pkg-config is not found or if any package is not found.
-    pub fn run_pkg_config<I, S>(
+    fn run_pkg_config_raw<I, S>(
+        args: &[&str],
         packages: I,
         pkg_config_path: Option<&str>,
     ) -> Result<String, String>
@@ -283,7 +439,7 @@ impl PkgConfigParser {
             cmd.env("PKG_CONFIG_PATH", path);
         }
 
-        cmd.args(["--static", "--libs"]);
+        cmd.args(args);
         cmd.args(&packages);
 
         let output = cmd
@@ -298,6 +454,48 @@ impl PkgConfigParser {
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Runs `pkg-config --static --libs` and returns the raw output.
+    ///
+    /// # Arguments
+    ///
+    /// * `packages` - Package names to query (e.g., `["spdk_env_dpdk", "libdpdk"]`)
+    /// * `pkg_config_path` - Optional path to set as `PKG_CONFIG_PATH` environment variable
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if pkg-config is not found or if any package is not found.
+    pub fn run_pkg_config<I, S>(
+        packages: I,
+        pkg_config_path: Option<&str>,
+    ) -> Result<String, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self::run_pkg_config_raw(&["--static", "--libs"], packages, pkg_config_path)
+    }
+
+    /// Runs `pkg-config --cflags` and returns the raw output.
+    ///
+    /// # Arguments
+    ///
+    /// * `packages` - Package names to query (e.g., `["spdk_env_dpdk", "libdpdk"]`)
+    /// * `pkg_config_path` - Optional path to set as `PKG_CONFIG_PATH` environment variable
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if pkg-config is not found or if any package is not found.
+    pub fn run_pkg_config_cflags<I, S>(
+        packages: I,
+        pkg_config_path: Option<&str>,
+    ) -> Result<String, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        Self::run_pkg_config_raw(&["--cflags"], packages, pkg_config_path)
     }
 
     /// Checks if a static library (`.a`) is available in a non-system directory.
@@ -447,54 +645,49 @@ impl PkgConfigParser {
         lib_indices.insert(lib_name.to_string(), idx);
     }
 
-    /// Emits cargo metadata directives for the parsed flags.
+    /// Parses `pkg-config --cflags` output into structured compiler flags.
     ///
-    /// Outputs `cargo:rustc-link-search`, `cargo:rustc-link-lib`, and
-    /// `cargo:rustc-link-arg` directives to stdout for cargo to consume.
+    /// Handles:
+    /// - `-I/path` → [`CompilerFlag::IncludePath`]
+    /// - `-DFOO` → [`CompilerFlag::Define`] `{ key: "FOO", value: None }`
+    /// - `-DFOO=bar` → [`CompilerFlag::Define`] `{ key: "FOO", value: Some("bar") }`
     ///
-    /// Usually called via [`probe_and_emit`](Self::probe_and_emit), but can
-    /// be called separately if you need to inspect or modify the parsed flags.
-    pub fn emit_cargo_metadata(&self, flags: &[LinkerFlag]) {
-        for flag in flags {
-            match flag {
-                LinkerFlag::SearchPath(path) => {
-                    println!("cargo:rustc-link-search=native={}", path);
+    /// Deduplicates flags (preserving first occurrence order).
+    /// Unknown flags are silently ignored.
+    pub fn parse_cflags(&self, output: &str) -> Vec<CompilerFlag> {
+        let mut flags = Vec::new();
+        let mut seen = HashSet::new();
+
+        for token in output.split_whitespace() {
+            if let Some(path) = token.strip_prefix("-I") {
+                if seen.insert(token.to_string()) {
+                    flags.push(CompilerFlag::IncludePath(PathBuf::from(path)));
                 }
-                LinkerFlag::Library { name, kind } => match kind {
-                    LinkKind::Default => {
-                        // Let the linker decide static vs dynamic
-                        println!("cargo:rustc-link-lib={}", name);
-                    }
-                    LinkKind::Static => {
-                        if self.no_bundle {
-                            println!("cargo:rustc-link-lib=static:-bundle={}", name);
-                        } else {
-                            println!("cargo:rustc-link-lib=static={}", name);
-                        }
-                    }
-                    LinkKind::WholeArchive => {
-                        if self.no_bundle {
-                            println!(
-                                "cargo:rustc-link-lib=static:+whole-archive,-bundle={}",
-                                name
-                            );
-                        } else {
-                            println!("cargo:rustc-link-lib=static:+whole-archive={}", name);
-                        }
-                    }
-                },
-                LinkerFlag::LinkerArg(arg) => {
-                    println!("cargo:rustc-link-arg={}", arg);
+            } else if let Some(define) = token.strip_prefix("-D")
+                && seen.insert(token.to_string())
+            {
+                if let Some((key, val)) = define.split_once('=') {
+                    flags.push(CompilerFlag::Define {
+                        key: key.to_string(),
+                        value: Some(val.to_string()),
+                    });
+                } else {
+                    flags.push(CompilerFlag::Define {
+                        key: define.to_string(),
+                        value: None,
+                    });
                 }
             }
+            // Unknown flags (e.g., -std=c11) are silently ignored
         }
+
+        flags
     }
 
-    /// Runs pkg-config, parses the output, and emits cargo metadata.
+    /// Runs pkg-config and parses both linker and compiler flags.
     ///
-    /// This is the main entry point for most use cases. It combines
-    /// [`run_pkg_config`](Self::run_pkg_config), [`parse`](Self::parse),
-    /// and [`emit_cargo_metadata`](Self::emit_cargo_metadata).
+    /// Executes `pkg-config --static --libs` and `pkg-config --cflags`
+    /// and returns the combined parsed result as a [`PkgConfig`].
     ///
     /// # Arguments
     ///
@@ -506,64 +699,32 @@ impl PkgConfigParser {
     /// ```no_run
     /// use pkgconf::PkgConfigParser;
     ///
-    /// PkgConfigParser::new()
-    ///     .probe_and_emit(
-    ///         ["openssl", "libfoo"],
-    ///         None,
-    ///     )
+    /// let pkg = PkgConfigParser::new()
+    ///     .probe(["spdk_env_dpdk", "libdpdk"], None)
     ///     .expect("pkg-config failed");
+    ///
+    /// // Emit cargo linker directives (no_bundle=true for -sys crates)
+    /// pkgconf::emit_cargo_metadata(&pkg.libs, true);
+    ///
+    /// // Get clang args for bindgen
+    /// let clang_args = pkgconf::to_clang_args(&pkg.cflags);
     /// ```
-    pub fn probe_and_emit<I, S>(
+    pub fn probe<I, S>(
         &self,
         packages: I,
         pkg_config_path: Option<&str>,
-    ) -> Result<(), String>
+    ) -> Result<PkgConfig, String>
     where
-        I: IntoIterator<Item = S>,
+        I: IntoIterator<Item = S> + Clone,
         S: AsRef<str>,
     {
-        let output = Self::run_pkg_config(packages, pkg_config_path)?;
-        let flags = self.parse(&output);
-        self.emit_cargo_metadata(&flags);
-        Ok(())
-    }
+        let libs_output = Self::run_pkg_config(packages.clone(), pkg_config_path)?;
+        let cflags_output = Self::run_pkg_config_cflags(packages, pkg_config_path)?;
 
-    /// Emits a cargo link directive for an additional library.
-    ///
-    /// Use this to add libraries that aren't in the pkg-config output
-    /// but are still needed for linking.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use pkgconf::{PkgConfigParser, LinkKind};
-    ///
-    /// let parser = PkgConfigParser::new();
-    /// parser.add_extra_lib("custom_lib", LinkKind::Static);
-    /// ```
-    pub fn add_extra_lib(&self, name: &str, kind: LinkKind) {
-        match kind {
-            LinkKind::Default => {
-                println!("cargo:rustc-link-lib={}", name);
-            }
-            LinkKind::Static => {
-                if self.no_bundle {
-                    println!("cargo:rustc-link-lib=static:-bundle={}", name);
-                } else {
-                    println!("cargo:rustc-link-lib=static={}", name);
-                }
-            }
-            LinkKind::WholeArchive => {
-                if self.no_bundle {
-                    println!(
-                        "cargo:rustc-link-lib=static:+whole-archive,-bundle={}",
-                        name
-                    );
-                } else {
-                    println!("cargo:rustc-link-lib=static:+whole-archive={}", name);
-                }
-            }
-        }
+        Ok(PkgConfig {
+            libs: self.parse(&libs_output),
+            cflags: self.parse_cflags(&cflags_output),
+        })
     }
 }
 
@@ -693,5 +854,193 @@ mod tests {
 
         // Should only have 2 entries (SearchPath + one library)
         assert_eq!(flags.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_cflags_include_paths() {
+        let parser = PkgConfigParser::new();
+        let output = "-I/opt/spdk/include -I/usr/include/dpdk";
+        let flags = parser.parse_cflags(output);
+
+        assert_eq!(flags.len(), 2);
+        assert_eq!(
+            flags[0],
+            CompilerFlag::IncludePath(PathBuf::from("/opt/spdk/include"))
+        );
+        assert_eq!(
+            flags[1],
+            CompilerFlag::IncludePath(PathBuf::from("/usr/include/dpdk"))
+        );
+    }
+
+    #[test]
+    fn test_parse_cflags_defines() {
+        let parser = PkgConfigParser::new();
+        let output = "-DFOO -DBAR=1 -DBAZ=hello";
+        let flags = parser.parse_cflags(output);
+
+        assert_eq!(flags.len(), 3);
+        assert_eq!(
+            flags[0],
+            CompilerFlag::Define {
+                key: "FOO".to_string(),
+                value: None
+            }
+        );
+        assert_eq!(
+            flags[1],
+            CompilerFlag::Define {
+                key: "BAR".to_string(),
+                value: Some("1".to_string())
+            }
+        );
+        assert_eq!(
+            flags[2],
+            CompilerFlag::Define {
+                key: "BAZ".to_string(),
+                value: Some("hello".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_cflags_mixed_with_unknown() {
+        let parser = PkgConfigParser::new();
+        let output = "-I/opt/spdk/include -std=c11 -DFOO -Wall -I/usr/include/dpdk";
+        let flags = parser.parse_cflags(output);
+
+        // Unknown flags (-std=c11, -Wall) are silently ignored
+        assert_eq!(flags.len(), 3);
+        assert_eq!(
+            flags[0],
+            CompilerFlag::IncludePath(PathBuf::from("/opt/spdk/include"))
+        );
+        assert_eq!(
+            flags[1],
+            CompilerFlag::Define {
+                key: "FOO".to_string(),
+                value: None
+            }
+        );
+        assert_eq!(
+            flags[2],
+            CompilerFlag::IncludePath(PathBuf::from("/usr/include/dpdk"))
+        );
+    }
+
+    #[test]
+    fn test_parse_cflags_dedup() {
+        let parser = PkgConfigParser::new();
+        let output = "-I/opt/spdk/include -I/opt/spdk/include -DFOO -DFOO";
+        let flags = parser.parse_cflags(output);
+
+        assert_eq!(flags.len(), 2);
+    }
+
+    #[test]
+    fn test_to_clang_arg() {
+        assert_eq!(
+            CompilerFlag::IncludePath(PathBuf::from("/opt/spdk/include")).to_clang_arg(),
+            "-I/opt/spdk/include"
+        );
+        assert_eq!(
+            CompilerFlag::Define {
+                key: "FOO".to_string(),
+                value: None
+            }
+            .to_clang_arg(),
+            "-DFOO"
+        );
+        assert_eq!(
+            CompilerFlag::Define {
+                key: "FOO".to_string(),
+                value: Some("1".to_string())
+            }
+            .to_clang_arg(),
+            "-DFOO=1"
+        );
+    }
+
+    #[test]
+    fn test_to_clang_args() {
+        let flags = vec![
+            CompilerFlag::IncludePath(PathBuf::from("/opt/spdk/include")),
+            CompilerFlag::Define {
+                key: "FOO".to_string(),
+                value: None,
+            },
+        ];
+        let args = to_clang_args(&flags);
+        assert_eq!(args, vec!["-I/opt/spdk/include", "-DFOO"]);
+    }
+
+    #[test]
+    fn test_to_cargo_directive_search_path() {
+        let flag = LinkerFlag::SearchPath("/opt/spdk/lib".to_string());
+        assert_eq!(
+            flag.to_cargo_directive(true),
+            "cargo:rustc-link-search=native=/opt/spdk/lib"
+        );
+        assert_eq!(
+            flag.to_cargo_directive(false),
+            "cargo:rustc-link-search=native=/opt/spdk/lib"
+        );
+    }
+
+    #[test]
+    fn test_to_cargo_directive_default_lib() {
+        let flag = LinkerFlag::Library {
+            name: "pthread".to_string(),
+            kind: LinkKind::Default,
+        };
+        assert_eq!(
+            flag.to_cargo_directive(true),
+            "cargo:rustc-link-lib=pthread"
+        );
+        assert_eq!(
+            flag.to_cargo_directive(false),
+            "cargo:rustc-link-lib=pthread"
+        );
+    }
+
+    #[test]
+    fn test_to_cargo_directive_static_lib() {
+        let flag = LinkerFlag::Library {
+            name: "spdk_log".to_string(),
+            kind: LinkKind::Static,
+        };
+        assert_eq!(
+            flag.to_cargo_directive(true),
+            "cargo:rustc-link-lib=static:-bundle=spdk_log"
+        );
+        assert_eq!(
+            flag.to_cargo_directive(false),
+            "cargo:rustc-link-lib=static=spdk_log"
+        );
+    }
+
+    #[test]
+    fn test_to_cargo_directive_whole_archive() {
+        let flag = LinkerFlag::Library {
+            name: "rte_eal".to_string(),
+            kind: LinkKind::WholeArchive,
+        };
+        assert_eq!(
+            flag.to_cargo_directive(true),
+            "cargo:rustc-link-lib=static:+whole-archive,-bundle=rte_eal"
+        );
+        assert_eq!(
+            flag.to_cargo_directive(false),
+            "cargo:rustc-link-lib=static:+whole-archive=rte_eal"
+        );
+    }
+
+    #[test]
+    fn test_to_cargo_directive_linker_arg() {
+        let flag = LinkerFlag::LinkerArg("-Wl,--export-dynamic".to_string());
+        assert_eq!(
+            flag.to_cargo_directive(true),
+            "cargo:rustc-link-arg=-Wl,--export-dynamic"
+        );
     }
 }

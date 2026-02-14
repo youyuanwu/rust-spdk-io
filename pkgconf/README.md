@@ -1,80 +1,42 @@
 # pkgconf
 
-A Rust build helper for parsing pkg-config output with proper `--whole-archive` and static library support.
+Parses `pkg-config` output into structured types for both **linking** (`--libs`) and **bindgen** (`--cflags`), with proper `--whole-archive` and static library support.
 
-## Problem
+## Why not the `pkg-config` crate?
 
-The standard [`pkg-config`](https://crates.io/crates/pkg-config) crate has limitations:
-
-1. **Flag reordering** — It doesn't preserve the ordering of `-Wl,--whole-archive` and `-l` flags, breaking linking for libraries with constructor functions (like DPDK's `RTE_INIT` macros)
-2. **Static detection** — It doesn't properly distinguish between static and dynamic libraries based on `.a` file availability
-
-## Solution
-
-This crate parses pkg-config output directly and:
-
-- **Tracks `--whole-archive` regions** from the pkg-config output
-- **Auto-detects static library availability** by checking if `lib<name>.a` exists
-- **Excludes system directories** (default: `/usr`) so system libs link dynamically
-- **Emits correct cargo link directives** with proper modifiers (`static:`, `+whole-archive`, `-bundle`)
+1. It reorders `-Wl,--whole-archive` / `-l` flags, breaking libraries with constructor functions (DPDK's `RTE_INIT`, SPDK's `SPDK_SUBSYSTEM_REGISTER`)
+2. It doesn't auto-detect static vs dynamic linking based on `.a` file availability
 
 ## Usage
 
 ```rust
 use pkgconf::PkgConfigParser;
 
-// In build.rs
-fn main() {
-    PkgConfigParser::new()
-        .probe_and_emit(
-            ["openssl", "libfoo"],
-            None,  // or Some("/custom/pkgconfig/path")
-        )
-        .expect("pkg-config failed");
-}
-```
-
-### Force Whole-Archive
-
-For libraries with constructor functions that need `--whole-archive`:
-
-```rust
-use pkgconf::PkgConfigParser;
-
-PkgConfigParser::new()
-    .force_whole_archive([
-        "mylib_with_constructors",
-    ])
-    .probe_and_emit(["mylib"], None)
+// In build.rs — single call for both linking and bindgen
+let pkg = PkgConfigParser::new()
+    .force_whole_archive(["mylib_with_constructors"])
+    .probe(["spdk_env_dpdk", "libdpdk"], None)
     .expect("pkg-config failed");
-```
 
-### Custom System Roots
+// Emit cargo linker directives (no_bundle=true for -sys crates)
+pkgconf::emit_cargo_metadata(&pkg.libs, true);
 
-Libraries under system roots link dynamically (even if `.a` exists):
-
-```rust
-use pkgconf::PkgConfigParser;
-
-PkgConfigParser::new()
-    .system_roots(["/usr", "/usr/local", "/opt/homebrew"])
-    .probe_and_emit(["openssl"], None)
-    .expect("pkg-config failed");
+// Get clang args for bindgen
+let clang_args = pkgconf::to_clang_args(&pkg.cflags);
+bindgen::Builder::default()
+    .header("wrapper.h")
+    .clang_args(&clang_args)
+    .generate()
+    .expect("bindgen failed");
 ```
 
 ## Link Kinds
 
-Libraries are emitted with one of three link kinds:
-
-| Condition | Link Kind | Cargo Directive |
-|-----------|-----------|-----------------|
-| No `.a` found (or in system dir) | `Default` | `rustc-link-lib=name` |
-| `.a` exists, outside whole-archive region | `Static` | `rustc-link-lib=static:-bundle=name` |
-| `.a` exists, inside whole-archive region | `WholeArchive` | `rustc-link-lib=static:+whole-archive,-bundle=name` |
-
-## Why Constructor Functions Need Whole-Archive
-
-Libraries using `__attribute__((constructor))` or macros like DPDK's `RTE_INIT` register functionality at load time. Without `--whole-archive`, the linker discards these "unused" symbols, causing registration to fail silently.
+| Condition | Cargo Directive |
+|-----------|-----------------|
+| No `.a` found (or in system dir) | `rustc-link-lib=name` |
+| `.a` exists, outside whole-archive region | `rustc-link-lib=static:-bundle=name` |
+| `.a` exists, inside whole-archive region | `rustc-link-lib=static:+whole-archive,-bundle=name` |
 
 ## License
 

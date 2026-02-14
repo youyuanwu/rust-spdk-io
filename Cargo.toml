@@ -16,7 +16,7 @@ package.license = "MIT"
 # Workspace crates
 spdk-io = { path = "spdk-io", version = "0.1.0" }
 spdk-io-sys = { path = "spdk-io-sys", version = "0.1.0" }
-pkgconf = { path = "pkgconf" , version = "0.1.0" }
+pkgconf = { path = "pkgconf" , version = "0.2.0" }
 spdk-io-test = { path = "spdk-io-test" }
 
 # Error handling
@@ -30,7 +30,6 @@ futures-lite = "2"
 
 # Build dependencies
 bindgen = "0.72"
-pkg-config = "0.3"
 
 # Test dependencies
 tempfile = "3"

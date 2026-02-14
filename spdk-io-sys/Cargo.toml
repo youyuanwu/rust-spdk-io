@@ -15,5 +15,4 @@ include = ["/src", "/build.rs", "/wrapper.h"]
 
 [build-dependencies]
 bindgen.workspace = true
-pkg-config.workspace = true
 pkgconf.workspace = true
