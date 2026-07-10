@@ -41,6 +41,9 @@ add_custom_target(spdk_deb
     COMMAND ${CMAKE_COMMAND} -E copy ${SPDK_PKG_TEMPLATES_DIR}/spdk.sh ${SPDK_PKG_DIR}/etc/profile.d/spdk.sh
     COMMAND ${CMAKE_COMMAND} -E copy ${SPDK_PKG_TEMPLATES_DIR}/postinst ${SPDK_PKG_DIR}/DEBIAN/postinst
     COMMAND ${CMAKE_COMMAND} -E copy ${SPDK_PKG_TEMPLATES_DIR}/postrm ${SPDK_PKG_DIR}/DEBIAN/postrm
+    # dpkg-deb requires the control directory to be <=0775; cmake -E make_directory
+    # may create it as 0777 depending on umask/CMake version, so normalize it here.
+    COMMAND chmod 755 ${SPDK_PKG_DIR}/DEBIAN
     COMMAND chmod 755 ${SPDK_PKG_DIR}/DEBIAN/postinst ${SPDK_PKG_DIR}/DEBIAN/postrm
     # Build the .deb package
     COMMAND dpkg-deb --build ${SPDK_PKG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/spdk_${SPDK_VERSION}_amd64.deb

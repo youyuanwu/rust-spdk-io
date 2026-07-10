@@ -112,13 +112,23 @@ mod nvmf_subprocess {
             // Clean up old socket
             let _ = std::fs::remove_file(&rpc_socket);
 
+            // Choose a single core for nvmf_tgt that actually exists on this
+            // machine. Prefer core 2 (leaving cores 0 and 1 for the test), but
+            // fall back to the highest available core on machines with fewer
+            // than 3 cores so DPDK's EAL does not reject the core mask.
+            let ncores = thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
+            let core_index = ncores.saturating_sub(1).min(2);
+            let core_mask = format!("0x{:x}", 1u64 << core_index);
+
             // Start nvmf_tgt
             let mut child = Command::new(nvmf_tgt_path)
                 .args([
                     "-r",
                     &rpc_socket,
                     "-m",
-                    "0x4", // Core 2 (leave cores 0 and 1 for test)
+                    core_mask.as_str(), // single core, sized to available CPUs
                     "-s",
                     "1024", // 1024 MB memory (need more for bdev pool)
                     "--no-pci",
