@@ -15,8 +15,7 @@
 use std::ffi::c_void;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 use futures_channel::oneshot;
 
@@ -103,13 +102,6 @@ pub fn io_completion() -> (CompletionSender<()>, CompletionReceiver<()>) {
     completion()
 }
 
-/// A simple waker that does nothing - we poll manually.
-struct NoopWaker;
-
-impl Wake for NoopWaker {
-    fn wake(self: Arc<Self>) {}
-}
-
 /// Block on a future, polling the SPDK thread while waiting.
 ///
 /// This function runs the future to completion by repeatedly:
@@ -140,8 +132,8 @@ impl Wake for NoopWaker {
 /// block_on(desc.read(&channel, &mut buf, 0)).unwrap();
 /// ```
 pub fn block_on<F: Future>(mut future: F) -> F::Output {
-    let waker = Waker::from(Arc::new(NoopWaker));
-    let mut cx = Context::from_waker(&waker);
+    // We poll manually, so a no-op waker is sufficient.
+    let mut cx = Context::from_waker(Waker::noop());
 
     // Get the current SPDK thread - panic if not in SPDK context
     let thread = SpdkThread::get_current().expect("block_on called outside SPDK thread context");

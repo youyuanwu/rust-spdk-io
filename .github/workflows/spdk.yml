@@ -65,10 +65,14 @@ jobs:
       run: |
         sudo cmake --build build --target spdk_install
 
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+    - name: Read Rust toolchain version
+      id: rust-toolchain
+      run: echo "version=$(grep -oP 'channel\s*=\s*"\K[^"]+' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+    - name: Install rust
+      uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: 1.93.0
+        toolchain: ${{ steps.rust-toolchain.outputs.version }}
         components: rustfmt, clippy
 
     - uses: Swatinem/rust-cache@v2
