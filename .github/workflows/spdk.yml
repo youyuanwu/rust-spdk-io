@@ -186,7 +186,7 @@ jobs:
           exit 1
 
       - name: Download SPDK deb artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: spdk-deb
           path: build
