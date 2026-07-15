@@ -13,7 +13,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       PKG_CONFIG_PATH: "/opt/spdk/lib/pkgconfig"
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Run sccache-cache
       uses: mozilla-actions/sccache-action@v0.0.10
@@ -98,7 +98,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Start VM setup immediately (runs in parallel with build job)
       - name: Install dependencies
