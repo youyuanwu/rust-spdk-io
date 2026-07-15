@@ -54,7 +54,7 @@ jobs:
         cmake --build build --target spdk_deb
 
     - name: Upload SPDK deb artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: spdk-deb
         path: build/spdk_26.01_amd64.deb
