@@ -107,7 +107,7 @@ jobs:
           sudo apt-get install -y ansible qemu-system-x86 libvirt-daemon-system libvirt-clients virtinst cloud-image-utils
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.14.4"
 
