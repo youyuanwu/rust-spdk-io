@@ -29,7 +29,7 @@ futures-task = "0.3"
 futures-lite = "2"
 
 # Build dependencies
-bindgen = "=0.73.1"
+bindgen = "=0.73.2"
 
 # Test dependencies
 tempfile = "3"
