@@ -156,8 +156,6 @@ jobs:
             echo "Attempt $i/60: Waiting..."
             sleep 10
           done
-          # Additional wait for SSH to be ready
-          sleep 30
 
       # Now wait for build job's artifact (VM setup happened in parallel with build)
       - name: Wait for build job to complete
