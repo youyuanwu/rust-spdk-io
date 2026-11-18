@@ -7,7 +7,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ ubuntu-latest ]
+        # Build the SPDK .deb on the same Ubuntu release as the E2E VM.
+        os: [ ubuntu-24.04 ]
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
@@ -171,7 +172,7 @@ jobs:
             fi
             
             # Check if build job failed
-            BUILD_STATUS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs --jq '.jobs[] | select(.name == "build (ubuntu-latest)") | .conclusion' 2>/dev/null)
+            BUILD_STATUS=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs --jq '.jobs[] | select(.name == "build (ubuntu-24.04)") | .conclusion' 2>/dev/null)
             if [ "$BUILD_STATUS" = "failure" ] || [ "$BUILD_STATUS" = "cancelled" ]; then
               echo "Build job failed or was cancelled!"
               exit 1
